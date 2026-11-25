@@ -1,0 +1,25 @@
+resources:
+  jobs:
+    event_generator:
+      name: ecom-event-generator
+      description: Writes seeded CDC and click files to the landing volume (see src/ecommerce/SPEC.md).
+      max_concurrent_runs: 1
+      # Job parameters feed the notebook widgets of the same name.
+      parameters:
+        - name: scenario
+          default: baseline
+        - name: output_root
+          default: ${var.landing_root}
+        - name: duration
+          default: ""
+        - name: realtime
+          default: "false"
+        - name: seed
+          default: "42"
+        - name: params
+          default: "{}"
+      tasks:
+        - task_key: generate
+          # No compute block: the notebook task runs on serverless.
+          notebook_task:
+            notebook_path: ../src/ecommerce/generator/generate_events_notebook.py

@@ -4,9 +4,17 @@ bundle:
 include:
   - resources/*.yml
 
+variables:
+  catalog:
+    description: Unity Catalog catalog for the lab (the generator creates it if missing)
+    default: ecom_lab
+  landing_root:
+    description: Volume path the generator writes to
+    default: /Volumes/${var.catalog}/landing/raw
+
 targets:
   dev:
     mode: development
     default: true
-  test:
-    mode: production
+    workspace:
+      host: https://dbc-6797312c-94fe.cloud.databricks.com
