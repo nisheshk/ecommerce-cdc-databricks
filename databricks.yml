@@ -1,0 +1,12 @@
+bundle:
+  name: ecommerce-cdc-databricks
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+  test:
+    mode: production

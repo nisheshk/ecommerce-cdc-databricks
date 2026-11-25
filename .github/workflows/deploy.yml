@@ -1,0 +1,13 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # TODO: sync skills (scripts/sync_to_workspace.sh) and deploy bundle
+      - run: echo "deploy not configured yet"

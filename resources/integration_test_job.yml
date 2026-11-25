@@ -1,0 +1,3 @@
+# Integration test job. Define tasks before deploying.
+resources:
+  jobs: {}
