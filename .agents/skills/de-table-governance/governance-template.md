@@ -12,8 +12,8 @@ ALTER TABLE ecom_lab.silver.customers_scd2
   ALTER COLUMN customer_id COMMENT 'Unique customer identifier from the shop database',
   ALTER COLUMN email COMMENT 'Customer email [PII: EMAIL - HIGH]; masked by ecom_lab.ops.mask_email',
   ALTER COLUMN email_hash COMMENT 'SHA-256 hash of lowercase trimmed email for matching without PII exposure',
-  ALTER COLUMN __START_AT COMMENT 'lsn at which this version became current (SCD2)',
-  ALTER COLUMN __END_AT COMMENT 'lsn at which this version was superseded; NULL for the current version',
+  ALTER COLUMN __START_AT COMMENT 'Change time (ts_ms) at which this version became current (SCD2)',
+  ALTER COLUMN __END_AT COMMENT 'Change time at which this version was superseded; NULL for the current version',
   ALTER COLUMN audit_timestamp COMMENT 'Pipeline execution timestamp',
   ALTER COLUMN source_system COMMENT 'Upstream source system identifier';
 ```
@@ -45,8 +45,8 @@ CREATE FLOW customers_cdc AS AUTO CDC INTO ecom_lab.silver.customers_scd2
 FROM STREAM(customers_flat)
 KEYS (customer_id)
 APPLY AS DELETE WHEN op = 'd'
-SEQUENCE BY lsn
-COLUMNS * EXCEPT (op, lsn, _ingest_ts, _source_file)
+SEQUENCE BY change_ts
+COLUMNS * EXCEPT (op, change_ts, _ingest_ts, _source_file)
 STORED AS SCD TYPE 2
 TRACK HISTORY ON * EXCEPT (loyalty_points, audit_timestamp);
 

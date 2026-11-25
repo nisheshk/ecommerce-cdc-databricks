@@ -50,7 +50,7 @@ CREATE TEMPORARY VIEW orders_flat(
 )
 AS SELECT
   op,
-  source.lsn AS lsn,
+  timestamp_millis(ts_ms) AS change_ts,
   CASE WHEN op = 'd' THEN before.order_id ELSE after.order_id END AS order_id,
   CASE WHEN op = 'd' THEN before.customer_id ELSE after.customer_id END AS customer_id,
   CASE WHEN op = 'd' THEN before.total ELSE after.total END AS total,
@@ -74,8 +74,8 @@ CREATE FLOW orders_cdc AS AUTO CDC INTO ecom_lab.silver.orders
 FROM STREAM(orders_flat)
 KEYS (order_id)
 APPLY AS DELETE WHEN op = 'd'
-SEQUENCE BY lsn
-COLUMNS * EXCEPT (op, lsn, _ingest_ts, _source_file)
+SEQUENCE BY change_ts
+COLUMNS * EXCEPT (op, change_ts, _ingest_ts, _source_file)
 STORED AS SCD TYPE 1;
 ```
 

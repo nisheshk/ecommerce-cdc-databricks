@@ -67,8 +67,8 @@ Every table MUST include `audit_timestamp` and `source_system` as the LAST colum
 
 ## CDC
 
-- Flatten with a view: take `after` (or `before` when `op = 'd'`), expose `op` and `source.lsn AS lsn`.
-- Build silver with `AUTO CDC`: `KEYS (<pk>)`, `APPLY AS DELETE WHEN op = 'd'`, `SEQUENCE BY lsn` (never `ts_ms`), `COLUMNS * EXCEPT (op, lsn, _ingest_ts, _source_file)`.
+- Flatten with a view: take `after` (or `before` when `op = 'd'`), expose `op` and `timestamp_millis(ts_ms) AS change_ts`.
+- Build silver with `AUTO CDC`: `KEYS (<pk>)`, `APPLY AS DELETE WHEN op = 'd'`, `SEQUENCE BY change_ts`, `COLUMNS * EXCEPT (op, change_ts, _ingest_ts, _source_file)`. SCD2 `__START_AT`/`__END_AT` are then timestamps.
 - `STORED AS SCD TYPE 1` for current state, `SCD TYPE 2` for history. Exclude fast-changing counters from history with `TRACK HISTORY ON * EXCEPT (...)`.
 - Reject null keys and unknown `op` values with constraints on the flatten view, before AUTO CDC.
 
