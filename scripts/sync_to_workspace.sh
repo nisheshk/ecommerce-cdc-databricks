@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-# Sync .agents/skills and instructions/workspace_instructions.md to the Databricks workspace.
+# Sync .agents/skills and instructions/.assistant_workspace_instructions.md to the Databricks workspace.
 set -euo pipefail
