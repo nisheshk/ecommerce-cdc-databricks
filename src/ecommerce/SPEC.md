@@ -212,14 +212,14 @@ GV-08 is a good real-world test: deleting a person means bronze, every SCD2 vers
 Pipeline decorators are hard to unit test directly, so keep them thin. Put the logic in plain PySpark functions that take and return DataFrames, then unit test those functions and integration test the whole pipeline.
 
 ```python
-# src/ecom/transforms.py  (pure functions, no pipeline imports)
+# src/ecommerce/transforms/cdc.py  (pure functions, no pipeline imports)
 def flatten_cdc(df):
     return df.selectExpr("op", "source.lsn AS lsn",
                          "CASE WHEN op = 'd' THEN before ELSE after END AS r").select("op", "lsn", "r.*")
 
-# src/ecom/pipeline.py  (thin wrapper)
+# src/ecommerce/pipelines/silver/customers.py  (thin wrapper)
 from pyspark import pipelines as dp
-from ecom.transforms import flatten_cdc
+from ecommerce.transforms.cdc import flatten_cdc
 
 @dp.view
 @dp.expect_or_drop("valid_key", "customer_id IS NOT NULL")
@@ -259,21 +259,25 @@ Read expectation results from the pipeline event log (`event_type = 'flow_progre
 One bundle holds the generator job, the pipeline, and the test job, with `dev` and `test` targets pointing at different schemas. Everything is deployed with the Databricks CLI.
 
 ```
-ecom-lab/
+ecommerce-cdc-databricks/
   databricks.yml
   resources/
-    ecom_pipeline.yml      # Lakeflow pipeline (serverless)
-    generator_job.yml      # writes JSON to the landing volume
+    ecom_pipeline.yml          # Lakeflow pipeline (serverless)
+    generator_job.yml          # writes JSON to the landing volume
     integration_test_job.yml
-  src/ecom/                # transforms.py, pipeline.py, generator.py
-  tests/unit/              # pytest
-  tests/integration/       # assertion notebooks
+  src/ecommerce/
+    generator/generate_events.py
+    pipelines/{bronze,silver,gold}/
+    governance/policies.sql
+    transforms/                # pure PySpark functions
+  tests/unit/                  # pytest
+  tests/integration/           # assertion notebooks
 ```
 
 ```yaml
 # databricks.yml (trimmed)
 bundle:
-  name: ecom-lab
+  name: ecommerce-cdc-databricks
 variables:
   catalog: {default: ecom_lab}
   schema_suffix: {default: dev}
