@@ -42,7 +42,7 @@ Four CDC feeds plus one event stream, each written as small JSON files every few
  "after":  {"customer_id": 42, "province": "BC"}}
 ```
 
-`op` is `c`, `u`, `d` or `r` (snapshot). `source.lsn` is a strictly increasing sequence, so use it (not `ts_ms`) for `SEQUENCE BY`.
+`op` is `c`, `u`, `d` or `r` (snapshot). `ts_ms` is the change time, and the generator guarantees it strictly increases per row, so silver sequences by it: the flatten view exposes `timestamp_millis(ts_ms) AS change_ts` and AUTO CDC uses `SEQUENCE BY change_ts`. That makes `__START_AT`/`__END_AT` timestamps. `source.lsn` is the database log position; it stays in bronze for debugging. (With real Debezium, prefer `source.ts_ms`, the commit time; the top-level `ts_ms` is when the connector processed the change.)
 
 **Generator knobs (one parameter dict per run)**
 
@@ -53,7 +53,7 @@ Four CDC feeds plus one event stream, each written as small JSON files every few
 | `early_fact_pct` | 3% | Orders or clicks for a customer_id not created yet |
 | `late_dim_delay` | 10m | How long until that customer row shows up |
 | `orphan_pct` | 1% | Facts whose dimension never arrives |
-| `out_of_order_pct` | 5% | CDC events written with a lower lsn after a higher one |
+| `out_of_order_pct` | 5% | An older change written after a newer one (earlier `ts_ms`, lower lsn) |
 | `dup_pct` | 2% | Exact replays of earlier events (simulates Debezium failover) |
 | `delete_before_insert` | on/off | A `d` arriving before its `c` |
 | `bad_record_pct` | 1% | Null keys, negative totals, malformed JSON |
@@ -104,7 +104,7 @@ The JN-11 contrast is the one most people miss: stream-static joins give you the
 
 ## CDC
 
-Bronze keeps the raw envelope. A flatten view picks `after` (or `before` for deletes) and exposes `op` and `lsn`. `AUTO CDC` (the newer name for `APPLY CHANGES`) then builds silver.
+Bronze keeps the raw envelope. A flatten view picks `after` (or `before` for deletes) and exposes `op` and `change_ts` (`timestamp_millis(ts_ms)`). `AUTO CDC` (the newer name for `APPLY CHANGES`) then builds silver.
 
 ```sql
 CREATE OR REFRESH STREAMING TABLE silver.customers_scd2;
@@ -113,8 +113,8 @@ CREATE FLOW customers_cdc AS AUTO CDC INTO silver.customers_scd2
 FROM STREAM(bronze.customers_flat)
 KEYS (customer_id)
 APPLY AS DELETE WHEN op = 'd'
-SEQUENCE BY lsn
-COLUMNS * EXCEPT (op, lsn, _ingest_ts, _source_file)
+SEQUENCE BY change_ts
+COLUMNS * EXCEPT (op, change_ts, _ingest_ts, _source_file)
 STORED AS SCD TYPE 2
 TRACK HISTORY ON * EXCEPT (loyalty_points);
 ```
@@ -122,17 +122,17 @@ TRACK HISTORY ON * EXCEPT (loyalty_points);
 | ID | Scenario | Trigger | Expected | Verify |
 | --- | --- | --- | --- | --- |
 | CDC-01 | Initial snapshot | First run with `op='r'` rows | One current row per key | Count = distinct keys |
-| CDC-02 | Out-of-order update | `out_of_order_pct=5%` | Higher lsn wins; older update ignored | Final value = max-lsn value |
+| CDC-02 | Out-of-order update | `out_of_order_pct=5%` | Later `change_ts` wins; older update ignored | Final value = latest-`change_ts` value |
 | CDC-03 | Duplicate replay | `dup_pct=2%` | No extra rows or versions | SCD2 version count unchanged after replay |
-| CDC-04 | Delete then re-insert | `d` then `c` with higher lsn | SCD1: row returns. SCD2: old version closed, new one opened | Check `__END_AT` on the closed version |
-| CDC-05 | Delete before insert | `delete_before_insert=on` | Tombstone wins; late lower-lsn insert does not revive the row | Key absent from SCD1 |
+| CDC-04 | Delete then re-insert | `d` then `c` with a later `ts_ms` | SCD1: row returns. SCD2: old version closed, new one opened | Check `__END_AT` on the closed version |
+| CDC-05 | Delete before insert | `delete_before_insert=on` | Tombstone wins; late, older insert does not revive the row | Key absent from SCD1 |
 | CDC-06 | SCD1 vs SCD2 side by side | Same feed into `customers_scd1` and `customers_scd2` | SCD1 = current only; SCD2 = full history | Row counts and `__START_AT`/`__END_AT` |
 | CDC-07 | History on some columns only | `TRACK HISTORY ON` excluding `loyalty_points` | Points changes update in place, no new version | Version count after a points-only change |
 | CDC-08 | Null key or bad op | `bad_record_pct=1%` | Rejected by expectation before AUTO CDC | Rows in quarantine, pipeline still running |
 | CDC-09 | Order status lifecycle | placed to refunded | SCD1 orders show latest status; gold revenue nets refunds | Revenue drops after refund event |
 | CDC-10 | Point-in-time query | Ask: what was customer 42's province on a past date | One row from SCD2 by date range | Matches the change you generated |
 
-**Without AUTO CDC:** do CDC-02 and CDC-03 once with a hand-written `foreachBatch` MERGE (dedupe by key keeping max lsn first). It shows why `SEQUENCE BY` matters: a naive MERGE lets an old update overwrite a new one.
+**Without AUTO CDC:** do CDC-02 and CDC-03 once with a hand-written `foreachBatch` MERGE (dedupe by key keeping the latest `change_ts` first). It shows why `SEQUENCE BY` matters: a naive MERGE lets an old update overwrite a new one.
 
 ## Rewind and replay
 
@@ -214,8 +214,8 @@ Pipeline decorators are hard to unit test directly, so keep them thin. Put the l
 ```python
 # src/ecommerce/transforms/cdc.py  (pure functions, no pipeline imports)
 def flatten_cdc(df):
-    return df.selectExpr("op", "source.lsn AS lsn",
-                         "CASE WHEN op = 'd' THEN before ELSE after END AS r").select("op", "lsn", "r.*")
+    return df.selectExpr("op", "timestamp_millis(ts_ms) AS change_ts",
+                         "CASE WHEN op = 'd' THEN before ELSE after END AS r").select("op", "change_ts", "r.*")
 
 # src/ecommerce/pipelines/silver/customers.py  (thin wrapper)
 from pyspark import pipelines as dp
@@ -232,7 +232,7 @@ def customers_flat():
 | ID | Function | Case | Assert |
 | --- | --- | --- | --- |
 | UT-01 | `flatten_cdc` | Insert, update, delete envelopes | Delete row takes values from `before` |
-| UT-02 | `dedupe_latest` | Two events for one key, lsn 5 and 3 | Only lsn 5 kept |
+| UT-02 | `dedupe_latest` | Two events for one key, `change_ts` 10:05 and 10:03 | Only 10:05 kept |
 | UT-03 | `mask_phone` (Python twin of the SQL mask) | `519-555-1234` | `***-***-1234` |
 | UT-04 | `order_size_bucket` | Totals 0, 49.99, 50, 500 | Bucket edges correct |
 | UT-05 | `revenue_window` | Static DataFrame with late rows | Window sums match hand calc |

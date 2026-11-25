@@ -33,6 +33,7 @@ CREATE TEMPORARY VIEW customers_raw AS
 SELECT
   op,
   source.lsn AS lsn,
+  timestamp_millis(ts_ms) AS change_ts,
   CASE WHEN op = 'd' THEN before ELSE after END AS r,
   _ingest_ts,
   _source_file
@@ -42,6 +43,7 @@ CREATE TEMPORARY VIEW products_raw AS
 SELECT
   op,
   source.lsn AS lsn,
+  timestamp_millis(ts_ms) AS change_ts,
   CASE WHEN op = 'd' THEN before ELSE after END AS r,
   _ingest_ts,
   _source_file
@@ -51,6 +53,7 @@ CREATE TEMPORARY VIEW inventory_raw AS
 SELECT
   op,
   source.lsn AS lsn,
+  timestamp_millis(ts_ms) AS change_ts,
   CASE WHEN op = 'd' THEN before ELSE after END AS r,
   _ingest_ts,
   _source_file
@@ -60,6 +63,7 @@ CREATE TEMPORARY VIEW orders_raw AS
 SELECT
   op,
   source.lsn AS lsn,
+  timestamp_millis(ts_ms) AS change_ts,
   CASE WHEN op = 'd' THEN before ELSE after END AS r,
   _ingest_ts,
   _source_file
@@ -75,7 +79,7 @@ CREATE TEMPORARY VIEW customers_flat (
 ) AS
 SELECT
   op,
-  lsn,
+  change_ts,
   r.customer_id AS customer_id,
   r.name AS name,                       -- [PII: NAME - MEDIUM]
   r.email AS email,                     -- [PII: EMAIL - HIGH]
@@ -105,7 +109,7 @@ CREATE TEMPORARY VIEW products_flat (
 ) AS
 SELECT
   op,
-  lsn,
+  change_ts,
   r.product_id AS product_id,
   r.name AS name,
   r.category AS category,
@@ -129,7 +133,7 @@ CREATE TEMPORARY VIEW inventory_flat (
 ) AS
 SELECT
   op,
-  lsn,
+  change_ts,
   r.product_id AS product_id,
   r.warehouse_id AS warehouse_id,
   r.qty_on_hand AS qty_on_hand,
@@ -151,7 +155,7 @@ CREATE TEMPORARY VIEW orders_flat (
 ) AS
 SELECT
   op,
-  lsn,
+  change_ts,
   r.order_id AS order_id,
   r.customer_id AS customer_id,
   r.items AS items,
@@ -295,7 +299,7 @@ WHERE event_id IS NULL OR event_type IS NULL OR event_type NOT IN ('view', 'add_
 -- ----------------------------------------------------------------------------
 -- customers_scd2 (CDC) - SCD TYPE 2 - CONTAINS PII: name, email, phone, address
 -- Masks and the province row filter are declared here so they survive a full
--- refresh (GV-02, GV-03). __START_AT/__END_AT carry the lsn of the change.
+-- refresh (GV-02, GV-03). __START_AT/__END_AT carry the change time (change_ts).
 -- ----------------------------------------------------------------------------
 CREATE OR REFRESH STREAMING TABLE ecom_lab.silver.customers_scd2 (
   customer_id BIGINT COMMENT 'Unique customer identifier from shop_db',
@@ -311,8 +315,8 @@ CREATE OR REFRESH STREAMING TABLE ecom_lab.silver.customers_scd2 (
   data_quality_flag STRING COMMENT 'Row-level data quality status: CLEAN / MISSING_EMAIL / MISSING_PHONE / MISSING_NAME / MISSING_ADDRESS',
   audit_timestamp TIMESTAMP COMMENT 'Pipeline execution timestamp',
   source_system STRING COMMENT 'Upstream source system identifier',
-  __START_AT BIGINT COMMENT 'SCD2 validity start: lsn of the version-creating change',
-  __END_AT BIGINT COMMENT 'SCD2 validity end: lsn of the next version; NULL for the current one'
+  __START_AT TIMESTAMP COMMENT 'SCD2 validity start: change time (ts_ms) of the version-creating change',
+  __END_AT TIMESTAMP COMMENT 'SCD2 validity end: change time of the next version; NULL for the current one'
 )
 COMMENT 'Cleaned and validated customer dimension from bronze.customers (SCD2) - CONTAINS PII: name, email, phone, address'
 TBLPROPERTIES (
@@ -330,8 +334,8 @@ CREATE FLOW customers_cdc AS AUTO CDC INTO ecom_lab.silver.customers_scd2
 FROM STREAM(customers_flat)
 KEYS (customer_id)
 APPLY AS DELETE WHEN op = 'd'
-SEQUENCE BY lsn
-COLUMNS * EXCEPT (op, lsn, _ingest_ts, _source_file)
+SEQUENCE BY change_ts
+COLUMNS * EXCEPT (op, change_ts, _ingest_ts, _source_file)
 STORED AS SCD TYPE 2
 TRACK HISTORY ON * EXCEPT (loyalty_points);
 
@@ -352,8 +356,8 @@ CREATE FLOW products_cdc AS AUTO CDC INTO ecom_lab.silver.products_scd1
 FROM STREAM(products_flat)
 KEYS (product_id)
 APPLY AS DELETE WHEN op = 'd'
-SEQUENCE BY lsn
-COLUMNS * EXCEPT (op, lsn, _ingest_ts, _source_file)
+SEQUENCE BY change_ts
+COLUMNS * EXCEPT (op, change_ts, _ingest_ts, _source_file)
 STORED AS SCD TYPE 1;
 
 -- ----------------------------------------------------------------------------
@@ -373,8 +377,8 @@ CREATE FLOW inventory_cdc AS AUTO CDC INTO ecom_lab.silver.inventory_scd1
 FROM STREAM(inventory_flat)
 KEYS (product_id, warehouse_id)
 APPLY AS DELETE WHEN op = 'd'
-SEQUENCE BY lsn
-COLUMNS * EXCEPT (op, lsn, _ingest_ts, _source_file)
+SEQUENCE BY change_ts
+COLUMNS * EXCEPT (op, change_ts, _ingest_ts, _source_file)
 STORED AS SCD TYPE 1;
 
 -- ----------------------------------------------------------------------------
@@ -396,8 +400,8 @@ CREATE FLOW orders_cdc AS AUTO CDC INTO ecom_lab.silver.orders
 FROM STREAM(orders_flat)
 KEYS (order_id)
 APPLY AS DELETE WHEN op = 'd'
-SEQUENCE BY lsn
-COLUMNS * EXCEPT (op, lsn, _ingest_ts, _source_file)
+SEQUENCE BY change_ts
+COLUMNS * EXCEPT (op, change_ts, _ingest_ts, _source_file)
 STORED AS SCD TYPE 1;
 
 -- ----------------------------------------------------------------------------

@@ -5,6 +5,7 @@ import pytest
 
 from ecommerce.generator.generate_events import (
     CDC_FEEDS,
+    CDC_KEYS,
     SCENARIOS,
     EventGenerator,
     Knobs,
@@ -84,6 +85,27 @@ def test_knobs_off_is_clean():
         lsns = [json.loads(line)["source"]["lsn"] for line in lines]
         assert lsns == sorted(lsns), f"out of order lsn in {feed}"
     assert all(r["total"] >= 0 for r in (o["after"] for o in records(output, "orders")) if r)
+
+
+@pytest.mark.parametrize("name", ["cdc_chaos", "integration_chaos_mix"])
+def test_ts_ms_increases_per_key_in_lsn_order(name):  # SEQUENCE BY change_ts is safe
+    knobs = scenario_knobs(name, {"rate_per_sec": 50})
+    output = [lines for _, _, lines in EventGenerator(knobs, START).batches(60)]
+    for feed in CDC_FEEDS:
+        latest = {}
+        parsed = []
+        for line in set(lines_of(output, feed)):  # drop exact replays
+            try:
+                parsed.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        for record in sorted(parsed, key=lambda r: r["source"]["lsn"]):
+            row = record["after"] or record["before"]
+            key = tuple(row.get(col) for col in CDC_KEYS[feed])
+            if None in key or record["op"] == "x":
+                continue
+            assert record["ts_ms"] > latest.get(key, -1), f"{feed} {key}: ts_ms tie or reversal"
+            latest[key] = record["ts_ms"]
 
 
 def test_out_of_order_writes_lower_lsn_after_higher():  # CDC-02

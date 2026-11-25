@@ -58,7 +58,7 @@ At minimum, add descriptions for:
 - PII columns (note the risk level and any masking applied)
 - Data quality flag columns
 - Audit columns
-- CDC metadata (`op`, `lsn`, `__START_AT`, `__END_AT`)
+- CDC metadata (`op`, `change_ts`, `__START_AT`, `__END_AT`)
 - Any column whose meaning is not obvious from its name
 
 | Column Type | Description Pattern |

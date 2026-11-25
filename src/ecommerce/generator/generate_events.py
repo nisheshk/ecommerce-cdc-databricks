@@ -39,6 +39,12 @@ FEED_DIRS = {
     "clicks": "events/clicks",
 }
 CDC_FEEDS = ("customers", "products", "inventory", "orders")
+CDC_KEYS = {
+    "customers": ("customer_id",),
+    "products": ("product_id",),
+    "inventory": ("product_id", "warehouse_id"),
+    "orders": ("order_id",),
+}
 
 # Mix of random actions. Order lifecycle, stock drops and restocks are
 # scheduled on top of these.
@@ -234,6 +240,7 @@ class EventGenerator:
         self.batch_index = 0
         self._initial = (initial_customers, initial_products)
         self._lsn = 0
+        self._last_ts_ms: dict[tuple, int] = {}  # (table, key) -> ts_ms of its latest change
         self._seq = 0  # tie-breaker so the schedule heap never compares callbacks
         self._schedule: list = []  # (due_ts, seq, callback, args)
         self._carry = 0.0
@@ -278,14 +285,22 @@ class EventGenerator:
             self._next_out[feed].append(line)  # exact replay, like a Debezium failover
 
     def _cdc(self, table: str, op: str, before, after, ts: float) -> dict:
+        """A Debezium envelope. ts_ms strictly increases per row, in lsn order,
+        so SEQUENCE BY the timestamp never sees a tie (CDC-02, CDC-05)."""
         self._lsn += 1
-        return {"op": op, "ts_ms": int(ts * 1000),
+        ts_ms = int(ts * 1000)
+        row = after or before
+        key = tuple(row.get(col) for col in CDC_KEYS[table])
+        if None not in key:
+            ts_ms = max(ts_ms, self._last_ts_ms.get((table, key), -1) + 1)
+            self._last_ts_ms[(table, key)] = ts_ms
+        return {"op": op, "ts_ms": ts_ms,
                 "source": {"table": table, "lsn": self._lsn},
                 "before": before, "after": after}
 
     def _update(self, table: str, row: dict, changes: dict, ts: float, follow_up=None) -> None:
         """Emit a u for row. With out_of_order_pct, a second update is written
-        first and this lower-lsn one is held back to the next batch."""
+        first and this older one (earlier ts_ms) is held back to the next batch."""
         before = dict(row)
         row.update(changes)
         record = self._cdc(table, "u", before, dict(row), ts)
@@ -402,7 +417,7 @@ class EventGenerator:
         row = self._new_customer_row(customer_id, ts)
         created = self._cdc("customers", "c", None, dict(row), ts)
         if self.k.delete_before_insert and self.rng.random() < DELETE_BEFORE_INSERT_RATE:
-            # The d (higher lsn) lands a batch before its c; the tombstone must win (CDC-05).
+            # The d (later ts_ms) lands a batch before its c; the tombstone must win (CDC-05).
             self._emit("customers", self._cdc("customers", "d", dict(row), None, ts))
             self._emit("customers", created, hold=True)
             return
