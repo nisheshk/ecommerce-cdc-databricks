@@ -1,0 +1,20 @@
+resources:
+  pipelines:
+    ecom_pipeline:
+      name: ecom_pipeline
+      # Bronze ingests the landing volume via Auto Loader (SPEC.md build order
+      # step 2); silver/ and gold/ libraries are appended here as the lab grows.
+      catalog: ${var.catalog}
+      # UC pipelines require a target schema. Every dataset is fully qualified
+      # (ecom_lab.bronze.* etc.), so nothing publishes here; 'ops' only satisfies
+      # the requirement and holds any future TEMPORARY scratch objects.
+      target: ops
+      serverless: true
+      libraries:
+        # Bronze (step 2) and silver (step 3, AUTO CDC SCD1/SCD2); gold/ files
+        # are appended here as the lab grows. silver_tags.sql stays out: ALTER
+        # TABLE metadata DDL is not pipeline source.
+        - file:
+            path: ../src/ecommerce/pipelines/bronze/bronze.sql
+        - file:
+            path: ../src/ecommerce/pipelines/silver/silver.sql

@@ -42,6 +42,7 @@ SEED = int(dbutils.widgets.get("seed"))
 
 # COMMAND ----------
 
+# DBTITLE 1,Setup
 parts = OUTPUT_ROOT.split("/")
 if OUTPUT_ROOT.startswith("/Volumes/") and len(parts) >= 5:
     catalog, schema, volume = parts[2:5]
@@ -49,6 +50,10 @@ if OUTPUT_ROOT.startswith("/Volumes/") and len(parts) >= 5:
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{catalog}`.`{schema}`")
     spark.sql(f"CREATE VOLUME IF NOT EXISTS `{catalog}`.`{schema}`.`{volume}`")
     print(f"Volume ready: {catalog}.{schema}.{volume}")
+    # Medallion schemas the lab pipeline writes to (bronze/silver/gold/ops).
+    for layer in ("bronze", "silver", "gold", "ops"):
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{catalog}`.`{layer}`")
+    print(f"Lab schemas ready in {catalog}: bronze, silver, gold, ops")
 
 
 def run_scenario(name, overrides=None, duration=None, realtime=REALTIME):
